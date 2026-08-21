@@ -16,7 +16,7 @@ Key features:
   - Deduplication: case-insensitive sentence dedup.
 
 Usage:
-    set OPENAI_API_KEY=your_key_here
+    export GEMINI_API_KEY=your_key_here      # or OPENAI_API_KEY
     python tests/augment_all_data.py --input all_data_fixed.csv --per-row 5
     python tests/augment_all_data.py --start 50 --limit 20
 """
@@ -58,13 +58,18 @@ def parse_args() -> argparse.Namespace:
 
 # ── OpenAI client ─────────────────────────────────────────────────────────────
 def build_client(base_url: str) -> OpenAI:
-    # INSERISCI LA TUA CHIAVE GEMINI QUI SOTTO TRA LE VIRGOLETTE 
-    LA_MIA_CHIAVE_GEMINI = "[ENCRYPTION_KEY]"
+    """Build the API client.
 
-    if LA_MIA_CHIAVE_GEMINI and not LA_MIA_CHIAVE_GEMINI.startswith("INCOLLA"):
-        api_key = LA_MIA_CHIAVE_GEMINI
-    else:
-        api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+    The key is never written in the source: it is read from the environment.
+        export GEMINI_API_KEY=...      # or OPENAI_API_KEY
+    When neither is set, a placeholder is used, which is enough for a local
+    Ollama endpoint passed via --base-url.
+    """
+    api_key = (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or "ollama"
+    )
 
     if base_url.strip():
         return OpenAI(base_url=base_url.strip(), api_key=api_key)
@@ -395,12 +400,14 @@ def request_variants(
 def main() -> None:
     args = parse_args()
 
-    if not os.environ.get("OPENAI_API_KEY") and not args.base_url.strip():
+    has_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not has_key and not args.base_url.strip():
         raise RuntimeError(
-            "OPENAI_API_KEY is not set.\n"
-            "Get one at https://platform.openai.com/api-keys\n"
-            "Then: set OPENAI_API_KEY=sk-...\n"
-            "Or use --base-url http://localhost:11434/v1 for Ollama (free)"
+            "No API key found in the environment.\n"
+            "Set one before running, for example:\n"
+            "    export GEMINI_API_KEY=...\n"
+            "    export OPENAI_API_KEY=...\n"
+            "Or use --base-url http://localhost:11434/v1 for a local Ollama endpoint."
         )
 
     client = build_client(args.base_url)
