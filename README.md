@@ -43,7 +43,8 @@ chatbdi-slm-finetuning/
 ├── notebooks/
 │   ├── 01_Training_LoRA.ipynb           QLoRA fine-tuning on Colab (T4)
 │   ├── 02_Benchmark.ipynb               comparison of the three configurations
-│   └── conta_token.py                   measures example length in tokens
+│   ├── conta_token.py                   measures example length in tokens
+│   └── analisi_errori.py                reproduces the error-distribution table
 │
 ├── data/
 │   ├── consolidated/                    aggregation of the per-domain data
@@ -188,8 +189,19 @@ No key is needed when pointing the script at a local endpoint through
    configurations across two domain conditions and two prompting strategies,
    producing the CSV and the charts under `results/`.
 
-`notebooks/conta_token.py` is an auxiliary utility that measures the length in
-tokens of the training examples.
+Two auxiliary scripts accompany the pipeline. `notebooks/conta_token.py`
+measures the length in tokens of the training examples.
+`notebooks/analisi_errori.py` reproduces, from the raw results, the
+error-distribution table reported in the thesis: run it from the repository
+root, with no dependencies beyond the standard library.
+
+```bash
+python notebooks/analisi_errori.py
+```
+
+It prints the table three ways: each wrong output assigned to its single most
+severe defect (the table as reported), every defect counted wherever it occurs,
+and how often an output carries more than one defect at once.
 
 ## A note on the data
 
