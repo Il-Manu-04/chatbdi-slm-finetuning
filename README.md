@@ -156,21 +156,31 @@ No key is needed when pointing the script at a local endpoint through
    per-domain data into two overall collections, adding the source-domain
    column.
 
-   ```bash
-   python src/pipeline/merge_data.py
-   python src/pipeline/merge_literals.py
-   ```
+   These two scripts read a `src/pipeline/input/<domain>/` tree that belongs to
+   the ChatBDI project and is **not redistributed here**; they are included for
+   reference, and their output is already provided under `data/consolidated/`.
+   Point them at your own per-domain tree to use them.
 
 2. **Data augmentation** — `augment_all_data.py` produces paraphrased variants
    of every example, validating each one structurally against the reference
    literals: functor, arity and the type of each argument by position.
    Non-conforming variants are discarded.
 
+   This step runs on the data shipped here. Give it explicit paths — the
+   built-in defaults point next to the script, not into `data/`:
+
    ```bash
    export GEMINI_API_KEY=...
    python src/pipeline/augment_all_data.py \
-       --input all_data.csv --model gemini-3.1-flash-lite --per-row 5
+       --input    data/consolidated/all_data.csv \
+       --literals data/consolidated/all_literals.csv \
+       --output   data/consolidated/all_data_augmented.csv \
+       --model gemini-3.1-flash-lite --per-row 5
    ```
+
+   Useful flags: `--limit N` to try it on a handful of rows first, `--start N`
+   to resume an interrupted run, `--base-url` to point at a local endpoint
+   instead of a remote service.
 
 3. **Conversion** — `convert_to_jsonl.py` turns the triples into the
    three-role conversational format, in four modes: extended or compact system
@@ -180,6 +190,17 @@ No key is needed when pointing the script at a local endpoint through
    python src/pipeline/convert_to_jsonl.py --short             # compact, zero-shot
    python src/pipeline/convert_to_jsonl.py --short --examples  # compact, few-shot
    ```
+
+   The script reads the prompt files from the ChatBDI interpreter's
+   `modelfiles/` directory, at a path relative to its own location. To run it
+   from this repository, either place it inside a ChatBDI checkout or edit the
+   `MODELFILES` constant at the top of the file to point at `src/prompts/`.
+   Note that the two *extended* modes additionally need `nl2log.txt`, the
+   original system prompt, which belongs to the ChatBDI project and is not
+   included here; the two compact modes need only the files under
+   `src/prompts/`. The dataset the thesis actually trained on —
+   `data/training/dataset_short_R2.jsonl` — is the output of the compact,
+   zero-shot mode and is provided ready to use.
 
 4. **Fine-tuning** — `notebooks/01_Training_LoRA.ipynb`, on Google Colab with a
    16 GB T4 GPU. 4-bit QLoRA, rank 16, α = 32, four epochs, checkpoint
@@ -202,6 +223,109 @@ python notebooks/analisi_errori.py
 It prints the table three ways: each wrong output assigned to its single most
 severe defect (the table as reported), every defect counted wherever it occurs,
 and how often an output carries more than one defect at once.
+
+## Using this with a different model
+
+Nothing here is specific to Qwen3.5-4B. The pipeline takes any causal language
+model that Unsloth can load, and the steps below are what you actually need to
+change.
+
+### 1. Choosing the model to fine-tune
+
+The model is not a file you drop into the repository: it is a Hugging Face
+identifier, downloaded at runtime. Open `notebooks/01_Training_LoRA.ipynb` and
+edit one line:
+
+```python
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name     = "unsloth/Qwen3.5-4B",   # <- your model here
+    max_seq_length = 512,
+    load_in_4bit   = True,
+)
+```
+
+Any Unsloth-compatible identifier works, for example
+`unsloth/Llama-3.2-3B-Instruct` or `unsloth/mistral-7b-instruct-v0.3`. Names
+carrying the `bnb-4bit` suffix ship already quantised and load faster; the
+others are quantised on the fly, with the same end result. A local path to a
+model you downloaded yourself also works.
+
+Two settings deserve a second look when you change model — both inside
+`notebooks/01_Training_LoRA.ipynb`.
+
+`max_seq_length` is dimensioned on the examples used here (a sentence, a
+schema and a short term): raise it if your prompts are longer, and measure
+first with `notebooks/conta_token.py` rather than guessing. It appears
+**twice** in the notebook and both must be changed together, or training and
+loading disagree on the sequence length: once where the model is loaded
+(shown above) and once a few cells down, where the trainer is configured —
+`SFTTrainer(..., max_seq_length = 512, ...)`.
+
+`r` and `lora_alpha`, set a few lines below the model loading in the same
+cell (inside `FastLanguageModel.get_peft_model(...)`) — 16 and 32
+here — control how much capacity the adapters have; larger models tolerate the
+same values, much smaller ones may need a higher rank.
+
+### 2. Where the files go
+
+The notebooks run on Google Colab and read from Google Drive. Create one
+folder in your Drive and upload into it, flat, the files this repository
+provides:
+
+```
+MyDrive/<your-folder>/
+├── dataset_short_R2.jsonl        from data/training/     (fine-tuning)
+├── ft_ignoto_zero.jsonl          from data/benchmark/    (evaluation)
+├── ft_ignoto_few.jsonl                  "
+├── ft_ticket_zero.jsonl                 "
+├── ft_ticket_few.jsonl                  "
+├── base_ignoto_zero.jsonl               "
+├── base_ignoto_few.jsonl                "
+├── base_ticket_zero.jsonl               "
+└── base_ticket_few.jsonl                "
+```
+
+Then set the folder name at the top of both notebooks — `dataset_path` in
+`01_Training_LoRA.ipynb`, `DRIVE_FOLDER` in `02_Benchmark.ipynb`. Training
+writes its checkpoints, the LoRA adapters and a GGUF export back into the same
+folder.
+
+### 3. Running the evaluation
+
+`02_Benchmark.ipynb` reads the eight test files by name and produces one row
+per case in `benchmark_completo_tesiR2.csv`. Which model gets which files is
+not arbitrary:
+
+- the `ft_*` files carry the **compact** system prompt and are meant for a
+  fine-tuned model, which has already absorbed the conventions;
+- the `base_*` files carry the **extended** system prompt and are meant for a
+  model that has not been fine-tuned, and therefore needs the conventions
+  spelled out in the prompt.
+
+Each pair covers the two domain conditions (`ignoto` = held-in domains, unseen
+sentences; `ticket` = the domain excluded from training) and the two prompting
+strategies (`zero` and `few`). To add a model to the comparison, append an
+entry to the model list in the notebook with its identifier and the file set it
+should be measured on; the charts adapt to the number of models found in the
+CSV. Generation is greedy (`do_sample=False`), so repeated runs give identical
+outputs.
+
+### 4. Building a dataset for your own domain
+
+To retarget the whole thing at a different application domain you need two CSV
+files, semicolon-separated, in the shape of the ones under
+`data/consolidated/`:
+
+| file | columns |
+|---|---|
+| `all_data.csv` | `sentence` · `performative` · `embedding` · `solution` · `domain` |
+| `all_literals.csv` | `literal` · `functor` · `domain` |
+
+`solution` is the expected logical term, `embedding` the retrieved schema, and
+`all_literals.csv` is what the augmentation validates against — so its terms
+must be correct: an error there propagates into the training set. From those
+two files, run steps 2 and 3 above to obtain a training set in the same format
+as `dataset_short_R2.jsonl`, then point the training notebook at it.
 
 ## A note on the data
 
